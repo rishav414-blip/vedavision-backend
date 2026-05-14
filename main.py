@@ -798,6 +798,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://vedavision-frontend.rishav414.workers.dev",
         "https://vedavision.pages.dev",
         "https://vedvision.pages.dev",
         "https://vedavision-frontend.pages.dev",
