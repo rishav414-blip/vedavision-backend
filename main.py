@@ -227,8 +227,8 @@ def resolve_place(place: str) -> tuple[float, float, str]:
             detail="Geocoding not available. Install geopy + timezonefinder, "
                    "or pass lat/lon/tz directly in the request."
         )
-    geolocator = Nominatim(user_agent="vedavision-celestial-noir")
-    location = geolocator.geocode(place, timeout=10)
+    geolocator = Nominatim(user_agent="vedavision-celestial-noir", timeout=8)
+    location = geolocator.geocode(place, timeout=8)
     if not location:
         raise HTTPException(status_code=400, detail=f"Could not geocode: {place}")
     tf = TimezoneFinder()
