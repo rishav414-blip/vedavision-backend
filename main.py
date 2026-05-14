@@ -798,9 +798,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://vedavision.pages.dev",            # Cloudflare free URL
-        "https://vedavision-frontend.pages.dev",   # fallback
-        "http://127.0.0.1:5500",                   # local dev
+        "https://vedavision.pages.dev",
+        "https://vedvision.pages.dev",
+        "https://vedavision-frontend.pages.dev",
+        "http://127.0.0.1:5500",
         "http://localhost:5500",
     ],
     allow_methods=["*"],
