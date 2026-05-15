@@ -947,18 +947,18 @@ class JyotiRequest(BaseModel):
 
 @app.post("/api/jyoti")
 async def jyoti_chat(req: JyotiRequest):
-    """Jyoti — Claude-powered Vedic astrology chatbot."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    """Jyoti — Groq-powered Vedic astrology chatbot."""
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="Chatbot unavailable — API key not configured")
 
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
+        from groq import Groq
+        client = Groq(api_key=api_key)
     except ImportError:
         raise HTTPException(status_code=503, detail="Chatbot library not available")
 
-    # Build chart context string from the chart data
+    # Build chart context string
     ctx = req.chart_context
     lagna = ctx.get("lagna", {})
     lagna_sign = lagna.get("signEn") or lagna.get("sign") or "unknown"
@@ -980,37 +980,34 @@ async def jyoti_chat(req: JyotiRequest):
     for hid, h in key_houses.items():
         planets_in = ", ".join(h.get("planets", [])) or "empty"
         house_lines.append(f"House {hid} ({h.get('sign','?')}): {planets_in}")
-
     native_name = (ctx.get("native") or {}).get("name", "the native")
 
     chart_ctx_str = f"""CHART CONTEXT FOR THIS SESSION:
 Native: {native_name}
 Lagna (Ascendant): {lagna_sign}
 Moon Nakshatra: {nak_name}{f' Pada {nak_pada}' if nak_pada else ''} ({nak_lord} lord)
-Active Mahādaśā: {md_planet}{f' (until {md_end})' if md_end else ''}
-Active Antardasā: {ad_planet}
+Active Mahadasha: {md_planet}{f' (until {md_end})' if md_end else ''}
+Active Antardasha: {ad_planet}
 Active Yogas: {yoga_names}
 Key houses: {'; '.join(house_lines) if house_lines else 'not available'}
 
 Use this context to personalise every response. Address the user by their chart specifics, not generically."""
 
-    # Build messages for the API
-    messages = []
-    # Include conversation history (last 10 turns max to stay within token budget)
+    # Build messages — system prompt first, then history, then current
+    messages = [{"role": "system", "content": JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str}]
     for msg in req.history[-10:]:
         if msg.role in ("user", "assistant"):
             messages.append({"role": msg.role, "content": msg.content})
-    # Append current user message
     messages.append({"role": "user", "content": req.message})
 
     try:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        response = client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
             max_tokens=600,
-            system=JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str,
+            temperature=0.7,
             messages=messages,
         )
-        reply = response.content[0].text if response.content else "I'm having trouble responding right now. Please try again."
+        reply = response.choices[0].message.content if response.choices else "I'm having trouble responding right now. Please try again."
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Upstream error: {str(e)}")
 
