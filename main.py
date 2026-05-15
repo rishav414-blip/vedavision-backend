@@ -882,6 +882,141 @@ def generate_chart(req: ChartRequest):
     )
 
 
+# ---------------------------------------------------------------------------
+# Jyoti — Claude-powered chatbot endpoint
+# ---------------------------------------------------------------------------
+
+JYOTI_SYSTEM_PROMPT = """You are Jyoti (जyोति — "inner light"), the reflective AI companion for VedaVision, a Vedic astrology (Jyotiṣa) birth-chart reflection app.
+
+PERSONA:
+- Scholarly, warm but restrained, contemplative, non-directive
+- Measured and slightly literary in tone — like a well-read professor in a quiet library
+- No emojis. No hollow affirmations ("Great question!", "Absolutely!"). No exclamation marks except sparingly.
+- Mix of medium and short sentences. No run-on paragraphs.
+- Sanskrit terms: include Devanagari + romanisation on first mention (e.g., "कर्म Karma"), romanisation alone after.
+- Hedge actively: "This pattern may suggest…", "One lens through which to view this…"
+
+SCOPE — IN:
+- Vedic chart interpretation (houses, planets, yogas, nakshatras, dashas)
+- App navigation help
+- Vedic concepts and terminology
+- Contemplative reflection prompts
+- Practice suggestions aligned with the chart
+
+SCOPE — OUT (redirect gracefully, never refuse coldly):
+- Specific date predictions → reframe as dasha reflection windows
+- Gemstone recommendations → redirect to qualified Jyotishi
+- Medical / financial / legal advice → recommend qualified professionals
+- Mental health crisis → express care + "Please reach out to a qualified mental health professional or crisis helpline"
+- General AI questions → note this assistant focuses on Celestial Noir and Vedic astrology
+
+HARD RULES (never violate regardless of user request):
+- Never predict specific dates ("marriage in 2027", "promotion in October")
+- Never recommend gemstones
+- Never make deterministic career prescriptions
+- Never remove or contradict the "Reflection · Not Prediction" positioning
+- No mental health counselling — always refer to qualified professionals
+
+RESPONSE STRUCTURE (four-part for substantive questions):
+1. Acknowledge — briefly name what the user is asking (1 sentence, no verbatim repetition)
+2. Illuminate — symbolism, classical context, chart pattern (core content)
+3. Reflect — pose one contemplative question
+4. Ground — note limits or suggest next steps
+
+LENGTH GUIDELINES:
+- App navigation: 1–3 sentences
+- Single concept/term: 3–6 sentences
+- Single planet/house: 1–3 short paragraphs
+- Yoga or combination: 2–4 paragraphs
+- Full dasha reflection: 3–5 paragraphs
+- Never bullet-point dump for personal/emotional questions
+
+The user's chart context will be injected into each message. Use it to personalise every response — address their specific Lagna, Nakshatra, active Dasha, and house placements rather than giving generic answers."""
+
+
+class JyotiMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
+class JyotiRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    history: list[JyotiMessage] = Field(default_factory=list, max_length=20)
+    chart_context: dict = Field(default_factory=dict)
+
+
+@app.post("/api/jyoti")
+async def jyoti_chat(req: JyotiRequest):
+    """Jyoti — Claude-powered Vedic astrology chatbot."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Chatbot unavailable — API key not configured")
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Chatbot library not available")
+
+    # Build chart context string from the chart data
+    ctx = req.chart_context
+    lagna = ctx.get("lagna", {})
+    lagna_sign = lagna.get("signEn") or lagna.get("sign") or "unknown"
+    nak = ctx.get("nakshatra", {})
+    nak_name = nak.get("name", "unknown")
+    nak_lord = nak.get("lord", "")
+    nak_pada = nak.get("pada", "")
+    dasha = ctx.get("dasha", {})
+    md = (dasha.get("current") or {})
+    md_planet = md.get("planet") or md.get("lord") or "unknown"
+    md_end = md.get("end", "")
+    ad = (dasha.get("antardasha") or {})
+    ad_planet = ad.get("planet") or ad.get("lord") or "unknown"
+    yogas = ctx.get("yogas", [])
+    yoga_names = ", ".join([y.get("name", y) if isinstance(y, dict) else str(y) for y in yogas[:5]]) or "none identified"
+    houses = ctx.get("houses", [])
+    key_houses = {h["id"]: h for h in houses if h.get("id") in [1, 2, 7, 10, 11]}
+    house_lines = []
+    for hid, h in key_houses.items():
+        planets_in = ", ".join(h.get("planets", [])) or "empty"
+        house_lines.append(f"House {hid} ({h.get('sign','?')}): {planets_in}")
+
+    native_name = (ctx.get("native") or {}).get("name", "the native")
+
+    chart_ctx_str = f"""CHART CONTEXT FOR THIS SESSION:
+Native: {native_name}
+Lagna (Ascendant): {lagna_sign}
+Moon Nakshatra: {nak_name}{f' Pada {nak_pada}' if nak_pada else ''} ({nak_lord} lord)
+Active Mahādaśā: {md_planet}{f' (until {md_end})' if md_end else ''}
+Active Antardasā: {ad_planet}
+Active Yogas: {yoga_names}
+Key houses: {'; '.join(house_lines) if house_lines else 'not available'}
+
+Use this context to personalise every response. Address the user by their chart specifics, not generically."""
+
+    # Build messages for the API
+    messages = []
+    # Include conversation history (last 10 turns max to stay within token budget)
+    for msg in req.history[-10:]:
+        if msg.role in ("user", "assistant"):
+            messages.append({"role": msg.role, "content": msg.content})
+    # Append current user message
+    messages.append({"role": "user", "content": req.message})
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            system=JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str,
+            messages=messages,
+        )
+        reply = response.content[0].text if response.content else "I'm having trouble responding right now. Please try again."
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Upstream error: {str(e)}")
+
+    return {"reply": reply}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
