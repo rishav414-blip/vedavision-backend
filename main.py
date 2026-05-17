@@ -331,6 +331,42 @@ def build_d1_houses(lagna_sign: str, planet_positions: dict) -> list[dict]:
     return houses
 
 
+def build_d9_houses(planet_positions: dict, lagna_long: float) -> list[dict]:
+    """Build the D9 (Navamsa) divisional chart.
+
+    Each sign (30°) is divided into 9 Navamsas of 3°20' each.
+    D9 sign index = (sign_idx * 9 + navamsa_num) % 12
+    """
+    def d9_sign_for(longitude: float) -> str:
+        sign_idx = int(longitude // 30)
+        deg_in_sign = longitude - sign_idx * 30
+        navamsa_num = int(deg_in_sign // (10 / 3))  # 0..8
+        d9_sign_idx = (sign_idx * 9 + navamsa_num) % 12
+        return SIGNS[d9_sign_idx]
+
+    d9_lagna_sign = d9_sign_for(lagna_long)
+    d9_lagna_idx = SIGNS.index(d9_lagna_sign)
+
+    planet_d9_signs = {
+        name: d9_sign_for(pos["longitude"])
+        for name, pos in planet_positions.items()
+    }
+
+    houses = []
+    for i in range(12):
+        sign = SIGNS[(d9_lagna_idx + i) % 12]
+        planets_here = [
+            PLANET_ABBR[name] for name, ps in planet_d9_signs.items()
+            if ps == sign
+        ]
+        houses.append({
+            "num": i + 1,
+            "sign": sign,
+            "planets": planets_here,
+        })
+    return houses
+
+
 def build_d10_houses(planet_positions: dict, lagna_long: float) -> list[dict]:
     """Build the D10 (Dashamsha) divisional chart."""
     def d10_sign_for(longitude: float) -> str:
@@ -681,6 +717,7 @@ def map_to_vedavision_contract(
     planets: dict,
     lagna: dict,
     d1_houses: list[dict],
+    d9_houses: list[dict],
     d10_houses: list[dict],
     nak: dict,
     karakas: dict,
@@ -716,6 +753,15 @@ def map_to_vedavision_contract(
     houses_out = []
     for h in d1_houses:
         houses_out.append({
+            "id": h["num"],
+            "sign": h["sign"],
+            "short": h["sign"][:3],
+            "planets": h["planets"],
+        })
+
+    d9_out = []
+    for h in d9_houses:
+        d9_out.append({
             "id": h["num"],
             "sign": h["sign"],
             "short": h["sign"][:3],
@@ -768,6 +814,7 @@ def map_to_vedavision_contract(
         "sunSign": {"sign": sun_sign, "signEn": sun_sign},
         "nakshatra": nak_block,
         "houses": houses_out,
+        "d9Houses": d9_out,
         "d10Houses": d10_out,
         "karakas": karakas,
         "dasha": {
@@ -857,6 +904,7 @@ def generate_chart(req: ChartRequest):
     planets = calculate_planets(jd_ut, req.ayanamsa)
     lagna = calculate_lagna(jd_ut, lat, lon, req.ayanamsa)
     d1_houses = build_d1_houses(lagna["sign"], planets)
+    d9_houses = build_d9_houses(planets, lagna["longitude"])
     d10_houses = build_d10_houses(planets, lagna["longitude"])
     moon_long = planets["Moon"]["longitude"]
     nak = longitude_to_nakshatra(moon_long)
@@ -874,6 +922,7 @@ def generate_chart(req: ChartRequest):
         planets=planets,
         lagna=lagna,
         d1_houses=d1_houses,
+        d9_houses=d9_houses,
         d10_houses=d10_houses,
         nak=nak,
         karakas=karakas,
