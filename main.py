@@ -1090,6 +1090,102 @@ Use this context to personalise every response. Address the user by their chart 
     return {"reply": reply}
 
 
+# ---------------------------------------------------------------------------
+# Weekly digest email endpoint (Resend)
+# ---------------------------------------------------------------------------
+
+class DigestRequest(BaseModel):
+    email: str = Field(..., description="Recipient email")
+    name: str = Field(default="Seeker")
+    lagna: str = Field(default="")
+    nakshatra: str = Field(default="")
+    dasha_planet: str = Field(default="")
+    dasha_end: str = Field(default="")
+
+
+@app.post("/api/digest")
+async def send_digest(req: DigestRequest):
+    """Send a weekly VedaVision reflection digest via Resend."""
+    api_key = os.environ.get("RESEND_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Email service unavailable — RESEND_API_KEY not configured")
+
+    try:
+        import resend
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Email library not available")
+
+    resend.api_key = api_key
+
+    subject = f"Your VedaVision weekly reflection — {req.nakshatra} Nakshatra" if req.nakshatra else "Your VedaVision weekly reflection"
+
+    dasha_line = f"You are moving through a {req.dasha_planet} Mahadasha period{f' (until {req.dasha_end})' if req.dasha_end else ''}." if req.dasha_planet else "Your current planetary period carries its own texture and invitation."
+    lagna_line = f"As a {req.lagna} Lagna native" if req.lagna else "As you sit with your chart"
+    nak_line = f"the {req.nakshatra} Nakshatra" if req.nakshatra else "your birth Nakshatra"
+
+    plain_text = f"""VedaVision — Weekly Reflection
+For {req.name}
+
+{lagna_line}, {nak_line} holds a quiet signal worth returning to this week. Each Nakshatra carries a classical theme — not a decree, but a lens through which the week's texture may be read with greater clarity.
+
+{dasha_line} Planetary periods are not instructions. They are weather — a quality of light by which certain patterns become more visible. What has this period been asking you to notice?
+
+This week, one contemplative prompt to carry: What are you tending to, and what have you been allowing to go untended? The chart does not answer this for you. It only offers a mirror. The inquiry is yours.
+
+— Jyoti, VedaVision
+
+This reflection arrives as a companion to your chart, not a forecast. VedaVision is a reflection tool, not a prediction system.
+Unsubscribe at any time by contacting support@vedavision.app"""
+
+    html_body = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VedaVision Weekly Reflection</title>
+</head>
+<body style="margin:0;padding:0;background-color:#0A0618;font-family:Georgia,serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0A0618;">
+  <tr><td align="center" style="padding:40px 20px;">
+    <table width="580" cellpadding="0" cellspacing="0" style="max-width:580px;width:100%;">
+      <tr>
+        <td style="padding-bottom:24px;border-bottom:1px solid #2A1A3A;">
+          <p style="margin:0;font-family:Georgia,serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#7A6A9A;">VedaVision · Weekly Reflection</p>
+          <p style="margin:8px 0 0;font-family:Georgia,serif;font-size:22px;font-weight:300;color:#C0A860;">For {req.name}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:32px 0 24px;">
+          <p style="margin:0 0 20px;font-family:Georgia,serif;font-size:15px;line-height:1.75;color:#B8B0C8;">{lagna_line}, {nak_line} holds a quiet signal worth returning to this week. Each Nakshatra carries a classical theme — not a decree, but a lens through which the week&#8217;s texture may be read with greater clarity.</p>
+          <p style="margin:0 0 20px;font-family:Georgia,serif;font-size:15px;line-height:1.75;color:#B8B0C8;">{dasha_line} Planetary periods are not instructions. They are weather — a quality of light by which certain patterns become more visible. What has this period been asking you to notice?</p>
+          <p style="margin:0;font-family:Georgia,serif;font-size:15px;line-height:1.75;color:#B8B0C8;">This week, one contemplative prompt to carry: <em style="color:#E8E0F0;">What are you tending to, and what have you been allowing to go untended?</em> The chart does not answer this for you. It only offers a mirror. The inquiry is yours.</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-top:24px;border-top:1px solid #2A1A3A;">
+          <p style="margin:0 0 4px;font-family:Georgia,serif;font-size:13px;color:#C0A860;">— Jyoti, VedaVision</p>
+          <p style="margin:16px 0 0;font-family:Georgia,serif;font-size:11px;line-height:1.6;color:#4A3A6A;">This reflection arrives as a companion to your chart, not a forecast. VedaVision is a reflection tool, not a prediction system.<br>Unsubscribe at any time by contacting <a href="mailto:support@vedavision.app" style="color:#7A6A9A;text-decoration:none;">support@vedavision.app</a></p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"""
+
+    try:
+        response = resend.Emails.send({
+            "from": "Jyoti <digest@vedavision.app>",
+            "to": [req.email],
+            "subject": subject,
+            "text": plain_text,
+            "html": html_body,
+        })
+        return {"status": "sent", "id": response["id"]}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Email delivery error: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
