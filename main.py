@@ -1029,7 +1029,7 @@ Use this context to personalise every response. Address the user by their chart 
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
+            model="llama-3.3-70b-versatile",
             max_tokens=600,
             temperature=0.7,
             messages=messages,
