@@ -864,7 +864,7 @@ app.add_middleware(
 class ChartRequest(BaseModel):
     name: str = Field(default="Native")
     dob: str = Field(description="Birth date in YYYY-MM-DD format")
-    tob: str = Field(description="Birth time in HH:MM (24-hour) format")
+    tob: str = Field(default="", description="Birth time in HH:MM (24-hour) format; defaults to 00:00 if omitted")
     pob: Optional[str] = Field(default=None, description="Place name — used if lat/lon not provided")
     lat: Optional[float] = Field(default=None)
     lon: Optional[float] = Field(default=None)
@@ -902,9 +902,13 @@ def generate_chart(req: ChartRequest):
             detail="Provide either (pob) OR (lat, lon, tz)."
         )
 
-    # Parse birth datetime
+    # Parse birth datetime — strip whitespace; default to midnight if time omitted
+    dob_clean = req.dob.strip()
+    tob_clean = req.tob.strip() if req.tob else ""
+    if not tob_clean:
+        tob_clean = "00:00"
     try:
-        dt_local = datetime.strptime(f"{req.dob} {req.tob}", "%Y-%m-%d %H:%M")
+        dt_local = datetime.strptime(f"{dob_clean} {tob_clean}", "%Y-%m-%d %H:%M")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date/time format: {e}")
 
@@ -1277,19 +1281,56 @@ Planet positions:
 Personalise every response using the chart above. Reference actual placements, not generic descriptions. If a house is empty, read it through its lord. Use the native's name when natural."""
 
     # Shared conversation history (same shape works for both providers)
+    import logging
+    _log = logging.getLogger("jyoti")
+
+    # Use last 20 messages (10 pairs) for richer conversation context
     messages: list[dict] = []
-    for msg in req.history[-10:]:
+    for msg in req.history[-20:]:
         if msg.role in ("user", "assistant"):
             messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": req.message})
 
-    # ── Primary: Groq (llama-3.3-70b) — free, ~0.5s ──────────────────────
+    system_prompt_full = JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str
+
+    # ── Primary: Google Gemini 2.5 Flash — free, best instruction-following ─
+    # Free tier: 15 RPM, 1M tokens/day via AI Studio (aistudio.google.com)
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key and _GEMINI_AVAILABLE:
+        for gemini_model in ("gemini-2.5-flash", "gemini-2.0-flash"):
+            try:
+                _genai.configure(api_key=gemini_key)
+                model = _genai.GenerativeModel(
+                    model_name=gemini_model,
+                    system_instruction=system_prompt_full,
+                )
+                gemini_history = []
+                for msg in messages[:-1]:  # exclude last user message
+                    gemini_history.append({
+                        "role": "model" if msg["role"] == "assistant" else "user",
+                        "parts": [msg["content"]],
+                    })
+                chat = model.start_chat(history=gemini_history)
+                gemini_response = chat.send_message(
+                    req.message,
+                    generation_config=_genai.types.GenerationConfig(max_output_tokens=700, temperature=0.7),
+                )
+                reply = gemini_response.text or ""
+                if reply:
+                    label = "gemini-2.5-flash" if gemini_model == "gemini-2.5-flash" else "gemini-2.0-flash"
+                    return {"reply": reply, "model": label}
+            except Exception as e:
+                _log.warning("Gemini %s failed: %s", gemini_model, e)
+                continue
+
+    # ── Fallback: Groq (llama-3.3-70b) — free, ~0.5s ──────────────────────
+    # Free tier: rate-limited; fast inference via groq.com
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key and _GROQ_AVAILABLE:
         try:
-            groq_client = _Groq(api_key=groq_key, timeout=10.0)
+            groq_client = _Groq(api_key=groq_key, timeout=12.0)
             groq_messages = [
-                {"role": "system", "content": JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str},
+                {"role": "system", "content": system_prompt_full},
                 *messages,
             ]
             groq_response = groq_client.chat.completions.create(
@@ -1301,39 +1342,12 @@ Personalise every response using the chart above. Reference actual placements, n
             reply = groq_response.choices[0].message.content if groq_response.choices else ""
             if reply:
                 return {"reply": reply, "model": "groq"}
-        except Exception:
-            pass  # fall through to Gemini
-
-    # ── Fallback: Google Gemini 2.0 Flash — free (1,500 req/day) ──────────
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key and _GEMINI_AVAILABLE:
-        try:
-            _genai.configure(api_key=gemini_key)
-            model = _genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                system_instruction=JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str,
-            )
-            # Convert history to Gemini format (role: user/model)
-            gemini_history = []
-            for msg in messages[:-1]:  # exclude last user message — passed via send_message
-                gemini_history.append({
-                    "role": "model" if msg["role"] == "assistant" else "user",
-                    "parts": [msg["content"]],
-                })
-            chat = model.start_chat(history=gemini_history)
-            gemini_response = chat.send_message(
-                req.message,
-                generation_config=_genai.types.GenerationConfig(max_output_tokens=700, temperature=0.7),
-            )
-            reply = gemini_response.text or ""
-            if reply:
-                return {"reply": reply, "model": "gemini"}
-        except Exception:
-            pass  # fall through to error
+        except Exception as e:
+            _log.warning("Groq failed: %s", e)
 
     raise HTTPException(
         status_code=503,
-        detail="All AI providers unavailable — check GROQ_API_KEY and GEMINI_API_KEY environment variables",
+        detail="All AI providers unavailable — check GEMINI_API_KEY and GROQ_API_KEY environment variables",
     )
 
 
