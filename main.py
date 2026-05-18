@@ -1026,7 +1026,7 @@ Response length targets:
 - Multi-house / full chart overview: offer to break into sections; do not dump everything at once
 - Emotional or personal question: short response first, then one question back
 
-Default short — let the user pull more. First response on any topic: 2–4 sentences maximum unless the user asks a multi-part question. One precise insight lands better than five adequate ones.
+Default short — let the user pull more. First response on any topic: 2–4 sentences maximum unless the user asks a multi-part question. One precise insight lands better than five adequate ones. CRITICAL: Always write complete sentences. Never end mid-sentence. If approaching length limit, conclude the thought in the current sentence rather than starting a new one.
 
 ════════════════════════════════════
 § HUMAN-LIKE CONVERSATION RULES
@@ -1380,7 +1380,7 @@ Personalise every response using the chart above. Reference actual placements, n
                 chat = model.start_chat(history=gemini_history)
                 gemini_response = chat.send_message(
                     req.message,
-                    generation_config=_genai.types.GenerationConfig(max_output_tokens=700, temperature=0.7),
+                    generation_config=_genai.types.GenerationConfig(max_output_tokens=1200, temperature=0.7),
                 )
                 reply = gemini_response.text or ""
                 if reply:
@@ -1402,7 +1402,7 @@ Personalise every response using the chart above. Reference actual placements, n
             ]
             groq_response = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
-                max_tokens=700,
+                max_tokens=1200,
                 temperature=0.7,
                 messages=groq_messages,
             )
