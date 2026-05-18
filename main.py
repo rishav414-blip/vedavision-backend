@@ -11,12 +11,17 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import swisseph as swe
-import anthropic as _anthropic
 try:
     from groq import Groq as _Groq
     _GROQ_AVAILABLE = True
 except ImportError:
     _GROQ_AVAILABLE = False
+
+try:
+    import google.generativeai as _genai
+    _GEMINI_AVAILABLE = True
+except ImportError:
+    _GEMINI_AVAILABLE = False
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -1186,7 +1191,7 @@ class JyotiRequest(BaseModel):
 
 @app.post("/api/jyoti")
 async def jyoti_chat(req: JyotiRequest):
-    """Jyoti chatbot — Claude Haiku primary, Groq/llama-3.3-70b fallback."""
+    """Jyoti chatbot — Groq/llama-3.3-70b primary, Gemini 2.0 Flash fallback. Both free."""
     # Build rich chart context string
     ctx = req.chart_context
     lagna = ctx.get("lagna", {})
@@ -1277,39 +1282,11 @@ Personalise every response using the chart above. Reference actual placements, n
             messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": req.message})
 
-    # ── Primary: Claude Haiku with prompt caching ──────────────────────────
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    if anthropic_key:
-        try:
-            haiku = _anthropic.Anthropic(api_key=anthropic_key, timeout=10.0)
-            response = haiku.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=700,
-                temperature=1.0,  # Anthropic recommended value for non-extended-thinking mode
-                system=[
-                    {
-                        "type": "text",
-                        "text": JYOTI_SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},  # ~80% token savings on repeat calls
-                    },
-                    {
-                        "type": "text",
-                        "text": chart_ctx_str,
-                    },
-                ],
-                messages=messages,
-            )
-            reply = response.content[0].text if response.content else ""
-            if reply:
-                return {"reply": reply, "model": "haiku"}
-        except Exception:
-            pass  # fall through to Groq
-
-    # ── Fallback: Groq (llama-3.3-70b) ────────────────────────────────────
+    # ── Primary: Groq (llama-3.3-70b) — free, ~0.5s ──────────────────────
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key and _GROQ_AVAILABLE:
         try:
-            groq_client = _Groq(api_key=groq_key, timeout=8.0)
+            groq_client = _Groq(api_key=groq_key, timeout=10.0)
             groq_messages = [
                 {"role": "system", "content": JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str},
                 *messages,
@@ -1324,11 +1301,38 @@ Personalise every response using the chart above. Reference actual placements, n
             if reply:
                 return {"reply": reply, "model": "groq"}
         except Exception:
+            pass  # fall through to Gemini
+
+    # ── Fallback: Google Gemini 2.0 Flash — free (1,500 req/day) ──────────
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key and _GEMINI_AVAILABLE:
+        try:
+            _genai.configure(api_key=gemini_key)
+            model = _genai.GenerativeModel(
+                model_name="gemini-2.0-flash",
+                system_instruction=JYOTI_SYSTEM_PROMPT + "\n\n" + chart_ctx_str,
+            )
+            # Convert history to Gemini format (role: user/model)
+            gemini_history = []
+            for msg in messages[:-1]:  # exclude last user message — passed via send_message
+                gemini_history.append({
+                    "role": "model" if msg["role"] == "assistant" else "user",
+                    "parts": [msg["content"]],
+                })
+            chat = model.start_chat(history=gemini_history)
+            gemini_response = chat.send_message(
+                req.message,
+                generation_config=_genai.types.GenerationConfig(max_output_tokens=700, temperature=0.7),
+            )
+            reply = gemini_response.text or ""
+            if reply:
+                return {"reply": reply, "model": "gemini"}
+        except Exception:
             pass  # fall through to error
 
     raise HTTPException(
         status_code=503,
-        detail="All AI providers unavailable — check ANTHROPIC_API_KEY and GROQ_API_KEY environment variables",
+        detail="All AI providers unavailable — check GROQ_API_KEY and GEMINI_API_KEY environment variables",
     )
 
 
