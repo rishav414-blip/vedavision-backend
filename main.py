@@ -508,15 +508,24 @@ def calculate_vimshottari(moon_longitude: float, birth_jd_ut: float) -> dict:
             "lord": active_maha["lord"],
             "start": _jd_to_date_str(active_maha["start_jd"]),
             "end": _jd_to_date_str(active_maha["end_jd"]),
+            "start_iso": _jd_to_iso(active_maha["start_jd"]),
+            "end_iso": _jd_to_iso(active_maha["end_jd"]),
         },
         "current_antar": {
             "lord": active_antar["lord"] if active_antar else "Unknown",
             "start": _jd_to_date_str(active_antar["start_jd"]) if active_antar else "",
             "end": _jd_to_date_str(active_antar["end_jd"]) if active_antar else "",
+            "end_iso": _jd_to_iso(active_antar["end_jd"]) if active_antar else "",
         },
         "sequence": [
-            {"lord": lord, "years": years, "active": lord == active_maha["lord"]}
-            for lord, years in VIMSHOTTARI_SEQ
+            {
+                "lord": d["lord"],
+                "years": round(d["years"], 2),
+                "active": d["lord"] == active_maha["lord"],
+                "start_iso": _jd_to_iso(d["start_jd"]),
+                "end_iso": _jd_to_iso(d["end_jd"]),
+            }
+            for d in dashas
         ],
     }
 
@@ -533,6 +542,12 @@ def _jd_to_date_str(jd: float) -> str:
     month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     return f"{month_names[m]} {y}"
+
+
+def _jd_to_iso(jd: float) -> str:
+    """Convert Julian Day to 'YYYY-MM-DD' ISO format."""
+    y, m, d, _ = swe.revjul(jd)
+    return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
 
 
 def calculate_bnn_transits(natal_positions: dict, d1_houses: list[dict]) -> list[dict]:
@@ -792,15 +807,25 @@ def map_to_vedavision_contract(
     current_block = {
         "planet": dasha_raw["current_maha"]["lord"],
         "skt": PLANET_SKT.get(dasha_raw["current_maha"]["lord"], dasha_raw["current_maha"]["lord"]),
-        "start": dasha_raw["current_maha"]["start"],
-        "end": dasha_raw["current_maha"]["end"],
+        "start": dasha_raw["current_maha"]["start_iso"],
+        "end": dasha_raw["current_maha"]["end_iso"],
     }
     antar_block = {
         "planet": dasha_raw["current_antar"]["lord"],
         "skt": PLANET_SKT.get(dasha_raw["current_antar"]["lord"], dasha_raw["current_antar"]["lord"]),
-        "start": dasha_raw["current_antar"]["start"],
-        "end": dasha_raw["current_antar"]["end"],
+        "start": dasha_raw["current_antar"].get("start", ""),
+        "end": dasha_raw["current_antar"].get("end_iso", ""),
     }
+    # Full dasha sequence with ISO dates for ForecastTab / TimeSliderTab
+    dasha_sequence = [
+        {
+            "planet": d["lord"],
+            "years": d["years"],
+            "start": d["start_iso"],
+            "end": d["end_iso"],
+        }
+        for d in dasha_raw["sequence"]
+    ]
 
     # AK / AmK for quick access
     ak_planet = karakas.get("atmakaraka", {}).get("planet_name", "")
@@ -831,7 +856,9 @@ def map_to_vedavision_contract(
         "dasha": {
             "current": current_block,
             "antardasha": antar_block,
+            "sequence": dasha_sequence,
         },
+        "yoga": [y["name"] for y in yogas],
         "planetTable": planet_table,
         "wealthScore": wealth_score,
         "chartStrength": chart_strength,
