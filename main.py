@@ -476,7 +476,7 @@ def calculate_vimshottari(moon_longitude: float, birth_jd_ut: float) -> dict:
         })
         current_jd = end_jd
         seq_idx = (seq_idx + 1) % len(VIMSHOTTARI_SEQ)
-        if current_jd > today_jd + 365 * 20:
+        if current_jd > today_jd + 365 * 120:
             break
 
     active_maha = next(d for d in dashas if d["start_jd"] <= today_jd < d["end_jd"])
